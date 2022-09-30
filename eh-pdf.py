@@ -1,11 +1,8 @@
 #!/usr/bin/python3
 import asyncio, logging, re, aiohttp, argparse, json, os
-from PIL import Image
 
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s [%(levelname)s] %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S'
-                    )
+import PIL.Image, PIL.ImageOps
+from PIL import Image, ImageEnhance
 
 CURRENT_DIR = os.getcwd()
 APP_DIR: str = ''
@@ -26,11 +23,13 @@ async def main():
 
     logging.debug(f'the url is {args.Gallery_URL}')
     target_gallery = EHGallery(args.Gallery_URL)
+    logging.info('正在收集數據，，，')
     await target_gallery.get_metadata()
     await target_gallery.get_each_page_link()
     await target_gallery.download_images()
     # print(target_gallery.page_links)
     target_gallery.create_pdf()
+
     await asyncio.sleep(1)
     return
 
@@ -70,7 +69,7 @@ class EHGallery():
         self.gallery_token = result[3]
         self.is_EX = result[1] == 'x'
 
-        if not EH_COOKIES:
+        if self.is_EX and not EH_COOKIES:
             logging.warning('恁提供了一個 ExHentai 的連結，但是卻沒有提供登入 cookies，'
                             '因此俺會嘗試在 E-Hentai 上搜索對應的畫廊，但是俺不保證成功，，，')
             self.is_EX = False
@@ -259,7 +258,7 @@ class EHGallery():
                 to_dl.remove(int(result[1]))
 
         logging.info(f'[download_images] 我們還有 {len(to_dl)} 個需要下載。')
-        MAX_CONCURRENT_TASKS = 8
+        MAX_CONCURRENT_TASKS = args.j
         WORKER_POOL = []
 
         queue = asyncio.Queue()
@@ -285,7 +284,9 @@ class EHGallery():
             except asyncio.queues.QueueEmpty:
                 await asyncio.sleep(0.1)
 
-        logging.info(f'[download_images] 完成力，總共 {self.page_count} 個，成功 {len(dl_ok)} 個，失敗 {len(dl_failed)} 個')
+        print('')
+        logging.info(
+            f'[download_images] 完成力，總共 {self.page_count} 個，成功 {len(dl_ok)} 個，失敗 {len(dl_failed)} 個')
         if len(dl_failed):
             logging.warning(f'[download_images] 失敗了 {len(dl_failed)} 個，請重新運行一次本程序！')
             exit(1)
@@ -358,16 +359,42 @@ class EHGallery():
         images = []
         try:
             for index in range(self.page_count):
-                images.append(Image.open(f'{download_dir}/{self.local_filenames[str(index)]}'))
+                modified = image_process(Image.open(f'{download_dir}/{self.local_filenames[str(index)]}'), index == 0)
+                images.append(modified)
+
         except KeyError:
             logging.error(f'[create_pdf] 數據已損壞，請刪除下載目錄中的內容並重新下載，，，')
             exit(1)
 
-        pdf_path = f'{CURRENT_DIR}/{self.title}.pdf'
-        images[0].save(
-            pdf_path, "PDF", resolution=100.0, save_all=True, append_images=images[1:]
-        )
+        pdf_path = args.output or f'{CURRENT_DIR}/{self.title}.pdf'
+        try:
+            images[0].save(
+                pdf_path, "PDF", resolution=100.0, save_all=True, append_images=images[1:]
+            )
+        except PermissionError:
+            logging.error(f'[create_pdf] 無法儲存到 {pdf_path}，請檢查文件是否被佔用以及權限是否正常')
+            exit(1)
+
         logging.info(f'[create_pdf] PDF 建立完成，牠就在 {pdf_path}！')
+
+
+def image_process(image: Image, first=False) -> Image:
+    new_image = image
+    if args.greyscale and not first:
+        logging.debug(f'[image_process] 轉換成灰度')
+        new_image = PIL.ImageOps.grayscale(new_image)
+        enhancer = ImageEnhance.Contrast(new_image)
+        new_image = enhancer.enhance(1.25)
+
+    if args.max_x or args.max_y:
+        logging.debug(f'[image_process] 縮放大小到 {args.max_x}x{args.max_y}')
+        if args.max_x is None:
+            args.max_x = 99999
+        if args.max_y is None:
+            args.max_y = 99999
+        new_image.thumbnail((args.max_x, args.max_y), resample=PIL.Image.Resampling.LANCZOS)
+
+    return new_image
 
 
 def extract_info(content: str, regExp: str) -> str:
@@ -395,15 +422,22 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--cookies', default='cookies.json', help='Your EH login cookies file')
     parser.add_argument('-g', '--greyscale',
                         action='store_true',
-                        help='Convert the image to greyscale for Kindle, except the first cover image')
+                        help='轉換成灰度並稍微提高對比度，方便使用 Kindle 觀看')
     parser.add_argument('-x', '--max-x', type=int,
                         help='The max width in pixels of the PDF image, useful to reduce file size for Kindle')
     parser.add_argument('-y', '--max-y', type=int,
                         help='The max height in pixels of the PDF image, useful to reduce file size for Kindle')
     parser.add_argument('-o', '--output', help='The output path/filename of PDF file')
-    parser.add_argument('-s', '--sweep', action='store_true', help='Delete the download path after task complete')
+    parser.add_argument('-j', type=int, default=12, help='允許多線程下載的最多線程，默認 12')
+    parser.add_argument('-d', '--debug', action='store_true', help='Debug 模式，讓日誌輸出更加羅嗦')
     parser.add_argument('Gallery_URL', help='The EH gallery URL to download.', default='', nargs='?', const=None)
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
+                        format='%(asctime)s [%(levelname)s] %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S'
+                        )
+
     logging.debug(args)
     # Let's roll!
     asyncio.run(main())
