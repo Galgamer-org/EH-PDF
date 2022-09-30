@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import asyncio, logging, re, aiohttp, argparse, json, os
+import asyncio, logging, re, aiohttp, argparse, json, os, io
 
 import PIL.Image, PIL.ImageOps
 from PIL import Image, ImageEnhance
@@ -339,7 +339,7 @@ class EHGallery():
                     local_file.close()
                     await queue.put({'index': index, 'success': True, 'filename': f'{index}{suffix}'})
                     return
-        except aiohttp.client.ClientError:
+        except (aiohttp.client.ClientError, asyncio.TimeoutError):
             logging.error(f'[download_worker] #{index} 連線失敗！')
             await queue.put({'index': index, 'success': False})
             return
@@ -362,8 +362,8 @@ class EHGallery():
                 modified = image_process(Image.open(f'{download_dir}/{self.local_filenames[str(index)]}'), index == 0)
                 images.append(modified)
 
-        except KeyError:
-            logging.error(f'[create_pdf] 數據已損壞，請刪除下載目錄中的內容並重新下載，，，')
+        except KeyError as e:
+            logging.error(f'[create_pdf] {e} 數據已損壞，請刪除下載目錄中的內容並重新下載，，，')
             exit(1)
 
         pdf_path = args.output or f'{CURRENT_DIR}/{self.title}.pdf'
@@ -380,11 +380,14 @@ class EHGallery():
 
 def image_process(image: Image, first=False) -> Image:
     new_image = image
+    new_image.load()
 
     if new_image.mode == "RGBA":
-        new_image.load()
+        logging.debug(f'[image_process] RGBA 轉換成 RGB')
+
         background = Image.new("RGB", new_image.size, (255, 255, 255))
         background.paste(new_image, mask=new_image.split()[3])  # 3 is the alpha channel
+
         new_image = background
 
     if args.greyscale and not first:
@@ -401,7 +404,13 @@ def image_process(image: Image, first=False) -> Image:
             args.max_y = 99999
         new_image.thumbnail((args.max_x, args.max_y), resample=PIL.Image.Resampling.LANCZOS)
 
-    return new_image
+    buffer = io.BytesIO()
+    new_image.save(buffer, 'jpeg')
+    buffer.flush()
+    new_image.close()
+    buffer.seek(0)
+
+    return Image.open(buffer)
 
 
 def extract_info(content: str, regExp: str) -> str:
