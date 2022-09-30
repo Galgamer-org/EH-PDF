@@ -380,6 +380,13 @@ class EHGallery():
 
 def image_process(image: Image, first=False) -> Image:
     new_image = image
+
+    if new_image.mode == "RGBA":
+        new_image.load()
+        background = Image.new("RGB", new_image.size, (255, 255, 255))
+        background.paste(new_image, mask=new_image.split()[3])  # 3 is the alpha channel
+        new_image = background
+
     if args.greyscale and not first:
         logging.debug(f'[image_process] 轉換成灰度')
         new_image = PIL.ImageOps.grayscale(new_image)
