@@ -3,6 +3,8 @@
 將一個 E-Hentai 畫廊下載並轉換成 PDF，方便在 Kindle 上閱讀
 以及在 iPad 上閱讀並作筆記，，，
 
+Download manga from E-Hentai and export to PDF, for Kindle and iPad！
+
 ## 特色
 
  * 支持將 E-Hentai 和 ExHentai 轉換成 PDF！
