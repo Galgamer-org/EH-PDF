@@ -2,3 +2,6 @@
 .idea/
 EH-Downloader/
 cookies.json
+build/
+eh-pdf.spec
+dist/
