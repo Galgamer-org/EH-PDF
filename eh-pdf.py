@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import asyncio, logging, re, aiohttp, argparse, json, os, io
+import asyncio, logging, re, aiohttp, argparse, json, os, io, sys
 
 import PIL.Image, PIL.ImageOps
 from PIL import Image, ImageEnhance
@@ -29,8 +29,8 @@ async def main():
     await target_gallery.download_images()
     # print(target_gallery.page_links)
     target_gallery.create_pdf()
-
-    await asyncio.sleep(1)
+    input('完成力，請按 Enter 鍵退出')
+    await asyncio.sleep(0.25)
     return
 
 
@@ -64,7 +64,7 @@ class EHGallery():
         result = re.search(r'https://e([x-])hentai\.org/g/(\d+)/([a-zA-z\d]+)/?$', url)
         if not result:
             logging.error(f'提供的畫廊連結過於惡俗！請按照以下格式：https://exhentai.org/g/2339054/da04b84080/')
-            exit(1)
+            sys.exit(1)
         self.gallery_id = result[2]
         self.gallery_token = result[3]
         self.is_EX = result[1] == 'x'
@@ -164,7 +164,7 @@ class EHGallery():
             async with session.post(API, data=json.dumps(payload)) as resp:
                 if resp.status != 200:
                     logging.error(f'無法聯絡 API： {API}')
-                    exit(1)
+                    sys.exit(1)
                 metadata = json.loads(await resp.text())
                 logging.debug(metadata)
                 try:
@@ -172,7 +172,7 @@ class EHGallery():
                     self.page_count = int(metadata['gmetadata'][0]['filecount'])
                 except KeyError as e:
                     logging.error(f'過於惡俗！ {e}')
-                    exit(1)
+                    sys.exit(1)
                 try:
                     self.title = metadata['gmetadata'][0]['title_jpn']
                 except:
@@ -213,7 +213,7 @@ class EHGallery():
             async with session.get(self.get_gallery_url(), allow_redirects=False) as resp:
                 if resp.status != 200:
                     logging.error(f'[get_thumb_page_count] 無法打開畫廊連結！！')
-                    exit(1)
+                    sys.exit(1)
                 html = await resp.text(encoding='UTF-8')
                 self.thumb_page_count = get_thumb_page_count(html)
                 logging.debug(f'縮略圖頁共有 {self.thumb_page_count} 頁')
@@ -226,7 +226,7 @@ class EHGallery():
                 async with session.get(self.get_gallery_url(p), allow_redirects=False) as resp:
                     if resp.status != 200:
                         logging.error(f'[get_thumb_page_count] 在提取第 {p} 頁時出錯！')
-                        exit(1)
+                        sys.exit(1)
                     html = await resp.text(encoding='UTF-8')
                     urls += extract_page_urls(html)
 
@@ -289,7 +289,7 @@ class EHGallery():
             f'[download_images] 完成力，總共 {self.page_count} 個，成功 {len(dl_ok)} 個，失敗 {len(dl_failed)} 個')
         if len(dl_failed):
             logging.warning(f'[download_images] 失敗了 {len(dl_failed)} 個，請重新運行一次本程序！')
-            exit(1)
+            sys.exit(1)
         return
 
     async def download_worker(self, index: int, queue: asyncio.Queue):
@@ -364,7 +364,7 @@ class EHGallery():
 
         except KeyError as e:
             logging.error(f'[create_pdf] {e} 數據已損壞，請刪除下載目錄中的內容並重新下載，，，')
-            exit(1)
+            sys.exit(1)
 
         pdf_path = args.output or f'{CURRENT_DIR}/{self.title}.pdf'
         try:
@@ -373,7 +373,7 @@ class EHGallery():
             )
         except PermissionError:
             logging.error(f'[create_pdf] 無法儲存到 {pdf_path}，請檢查文件是否被佔用以及權限是否正常')
-            exit(1)
+            sys.exit(1)
 
         logging.info(f'[create_pdf] PDF 建立完成，牠就在 {pdf_path}！')
 
