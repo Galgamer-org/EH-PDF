@@ -29,8 +29,8 @@ async def main():
     await target_gallery.download_images()
     # print(target_gallery.page_links)
     target_gallery.create_pdf()
-    input('完成力，請按 Enter 鍵退出')
-    await asyncio.sleep(0.25)
+    logging.info('完成力，即將退出')
+    await asyncio.sleep(1.25)
     return
 
 
