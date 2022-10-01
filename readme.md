@@ -7,6 +7,8 @@ Download manga from E-Hentai and export to PDF, for Kindle and iPad！
 
 ## 特色
 
+https://user-images.githubusercontent.com/66236255/193406050-43644be6-26dd-4c4e-8e07-3ff1bb58ba74.mp4
+
  * 支持將 E-Hentai 和 ExHentai 轉換成 PDF！
  * 支持登入加載和不登入加載（登入可以享受到你的帳號的特權，比如說加載大圖）
  * 多線程同時加載（不知道爲甚麼 Windows 上加載速度很陽春，我已經盡力了）
