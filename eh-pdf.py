@@ -230,7 +230,7 @@ class EHGallery():
                     html = await resp.text(encoding='UTF-8')
                     urls += extract_page_urls(html)
 
-        print('\n')
+        print('')
         logging.info(f'[get_each_page_link] 成功提取了 {len(urls)} 個項目')
         assert len(urls) == self.page_count
         self.page_links = urls
@@ -298,21 +298,21 @@ class EHGallery():
             async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
                 async with session.get(page_url, allow_redirects=False) as resp:
                     if resp.status != 200:
-                        logging.error(f'[download_worker] #{index} error occurred!!')
+                        logging.error(f'\r[download_worker] #{index} E-Hentai 無法打開！!!')
                         await queue.put({'index': index, 'success': False})
                         return
 
                     html = await resp.text()
                     target_img_url = extract_info(html, '<img id=.*?>').split('"')[3]
                     if not target_img_url:
-                        logging.error(f'[download_worker] #{index} target image {target_img_url} 過於惡俗！！')
+                        logging.error(f'\r[download_worker] #{index} target image {target_img_url} 過於惡俗！！')
                         await queue.put({'index': index, 'success': False})
                         return
 
             async with aiohttp.ClientSession(cookies={}) as session:
                 async with session.get(target_img_url, allow_redirects=False) as resp:
                     if resp.status != 200:
-                        logging.error(f'[download_worker] #{index} 狀態碼 {resp.status} 過於惡俗！！')
+                        logging.error(f'\r[download_worker] #{index} 狀態碼 {resp.status} 過於惡俗！！')
                         await queue.put({'index': index, 'success': False})
                         return
 
@@ -320,7 +320,7 @@ class EHGallery():
                     size = resp.headers.get('Content-Length')
                     bytes = await resp.read()
                     if len(bytes) != int(size):
-                        logging.error(f'[download_worker] #{index} 下載的文件大小 {len(bytes)}（{size}） 過於惡俗！！')
+                        logging.error(f'\r[download_worker] #{index} 下載的文件大小 {len(bytes)}（{size}） 過於惡俗！！')
                         await queue.put({'index': index, 'success': False})
                         return
 
@@ -330,7 +330,7 @@ class EHGallery():
                     elif mimetype == 'image/png':
                         suffix = '.png'
                     else:
-                        logging.error(f'[download_worker] #{index} 的 mime type {mimetype} 過於惡俗！！')
+                        logging.error(f'\r[download_worker] #{index} 的 mime type {mimetype} 過於惡俗！！')
                         await queue.put({'index': index, 'success': False})
                         return
 
@@ -340,7 +340,7 @@ class EHGallery():
                     await queue.put({'index': index, 'success': True, 'filename': f'{index}{suffix}'})
                     return
         except (aiohttp.client.ClientError, asyncio.TimeoutError):
-            logging.error(f'[download_worker] #{index} 連線失敗！')
+            logging.error(f'\r[download_worker] #{index} 連線失敗！')
             await queue.put({'index': index, 'success': False})
             return
 
