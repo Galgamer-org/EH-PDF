@@ -27,7 +27,9 @@ async def main():
     logging.info('正在收集數據，，，')
     await target_gallery.get_metadata()
     await target_gallery.get_each_page_link()
-    await target_gallery.download_images()
+    if not await target_gallery.download_images():
+        await asyncio.sleep(1.25)
+        return
     # print(target_gallery.page_links)
     target_gallery.create_pdf()
     logging.info('完成力，即將退出')
@@ -237,7 +239,7 @@ class EHGallery():
         self.page_links = urls
         self.save_progress()
 
-    async def download_images(self):
+    async def download_images(self) -> bool:
         # make download dir
         try:
             os.mkdir(f'{self.working_dir}/download')
@@ -259,7 +261,7 @@ class EHGallery():
                 to_dl.remove(int(result[1]))
 
         logging.info(f'[download_images] 我們還有 {len(to_dl)} 個需要下載。')
-        MAX_CONCURRENT_TASKS = args.j
+        MAX_CONCURRENT_TASKS = args.jobs
         WORKER_POOL = []
 
         queue = asyncio.Queue()
@@ -291,8 +293,8 @@ class EHGallery():
             f'[download_images] 完成力，總共 {self.page_count} 個，成功 {len(dl_ok)} 個，失敗 {len(dl_failed)} 個')
         if len(dl_failed):
             logging.warning(f'[download_images] 失敗了 {len(dl_failed)} 個，請重新運行一次本程序！')
-            sys.exit(1)
-        return
+            return False
+        return True
 
     async def download_worker(self, index: int, queue: asyncio.Queue, main_site_session: aiohttp.ClientSession):
         page_url = self.page_links[index]
@@ -438,7 +440,7 @@ def mkdir():
 
 if __name__ == '__main__':
     # parse arg
-    parser = argparse.ArgumentParser(prog='E-Hentai PDF Downloader',
+    parser = argparse.ArgumentParser(prog='eh-pdf.py',
                                      description='Download EH artwork to PDF for your Kindle or iPad')
     parser.add_argument('-c', '--cookies', default='cookies.json', help='Your EH login cookies file')
     parser.add_argument('-g', '--greyscale',
@@ -449,7 +451,7 @@ if __name__ == '__main__':
     parser.add_argument('-y', '--max-y', type=int,
                         help='The max height in pixels of the PDF image, useful to reduce file size for Kindle')
     parser.add_argument('-o', '--output', help='The output path/filename of PDF file')
-    parser.add_argument('-j', type=int, default=12, help='允許多線程下載的最多線程，默認 12')
+    parser.add_argument('-j', '--jobs', type=int, default=12, help='允許多線程下載的最多線程，默認 12')
     parser.add_argument('-d', '--debug', action='store_true', help='Debug 模式，讓日誌輸出更加羅嗦')
     parser.add_argument('Gallery_URL', help='The EH gallery URL to download.', default='', nargs='?', const=None)
     args = parser.parse_args()
@@ -460,5 +462,8 @@ if __name__ == '__main__':
                         )
 
     logging.debug(args)
+    if args.jobs < 1:
+        logging.error(f'線程數量爲 {args.jobs}，過於惡俗！')
+        sys.exit(2)
     # Let's roll!
     asyncio.run(main())
