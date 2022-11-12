@@ -12,6 +12,7 @@ EH_COOKIES = {
     'ipb_member_id': '3000000',
     'ipb_pass_hash': 'aaaaabbbbbcccccdddddeeeeefffffgg',
     'igneous': 'e12345678',
+    'hath_perks': 'a.b1.c-abcde12345'
 }
 
 
@@ -263,26 +264,27 @@ class EHGallery():
 
         queue = asyncio.Queue()
         print(f'\r下載中： {len(dl_ok) + len(dl_failed)}/{self.page_count}', end='')
-        while len(to_dl) or len(dl_ing):
-            while len(WORKER_POOL) < MAX_CONCURRENT_TASKS and len(to_dl) != 0:
-                this_index = to_dl[0]
-                asyncio.create_task(self.download_worker(this_index, queue))
-                WORKER_POOL.append(this_index)
-                to_dl.remove(this_index)
-                dl_ing.append(this_index)
-            try:
-                message = queue.get_nowait()
-                if message['success']:
-                    dl_ok.append(message['index'])
-                    self.local_filenames.update({str(message['index']): message['filename']})
-                    self.save_progress()
-                else:
-                    dl_failed.append(message['index'])
-                dl_ing.remove(message['index'])
-                WORKER_POOL.remove(message['index'])
-                print(f'\r下載中： {len(dl_ok) + len(dl_failed)}/{self.page_count}', end='')
-            except asyncio.queues.QueueEmpty:
-                await asyncio.sleep(0.1)
+        async with aiohttp.ClientSession(cookies=EH_COOKIES) as main_site_session:
+            while len(to_dl) or len(dl_ing):
+                while len(WORKER_POOL) < MAX_CONCURRENT_TASKS and len(to_dl) != 0:
+                    this_index = to_dl[0]
+                    asyncio.create_task(self.download_worker(this_index, queue, main_site_session))
+                    WORKER_POOL.append(this_index)
+                    to_dl.remove(this_index)
+                    dl_ing.append(this_index)
+                try:
+                    message = queue.get_nowait()
+                    if message['success']:
+                        dl_ok.append(message['index'])
+                        self.local_filenames.update({str(message['index']): message['filename']})
+                        self.save_progress()
+                    else:
+                        dl_failed.append(message['index'])
+                    dl_ing.remove(message['index'])
+                    WORKER_POOL.remove(message['index'])
+                    print(f'\r下載中： {len(dl_ok) + len(dl_failed)}/{self.page_count}', end='')
+                except asyncio.queues.QueueEmpty:
+                    await asyncio.sleep(0.1)
 
         print('')
         logging.info(
@@ -292,22 +294,22 @@ class EHGallery():
             sys.exit(1)
         return
 
-    async def download_worker(self, index: int, queue: asyncio.Queue):
+    async def download_worker(self, index: int, queue: asyncio.Queue, main_site_session: aiohttp.ClientSession):
         page_url = self.page_links[index]
         try:
-            async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
-                async with session.get(page_url, allow_redirects=False) as resp:
-                    if resp.status != 200:
-                        logging.error(f'\r[download_worker] #{index} E-Hentai 無法打開！!!')
-                        await queue.put({'index': index, 'success': False})
-                        return
+            #async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
+            async with main_site_session.get(page_url, allow_redirects=False) as resp:
+                if resp.status != 200:
+                    logging.error(f'\r[download_worker] #{index} E-Hentai 無法打開！!!')
+                    await queue.put({'index': index, 'success': False})
+                    return
 
-                    html = await resp.text()
-                    target_img_url = extract_info(html, '<img id=.*?>').split('"')[3]
-                    if not target_img_url:
-                        logging.error(f'\r[download_worker] #{index} target image {target_img_url} 過於惡俗！！')
-                        await queue.put({'index': index, 'success': False})
-                        return
+                html = await resp.text()
+                target_img_url = extract_info(html, '<img id=.*?>').split('"')[3]
+                if not target_img_url:
+                    logging.error(f'\r[download_worker] #{index} target image {target_img_url} 過於惡俗！！')
+                    await queue.put({'index': index, 'success': False})
+                    return
 
             async with aiohttp.ClientSession(cookies={}) as session:
                 async with session.get(target_img_url, allow_redirects=False) as resp:
@@ -369,7 +371,10 @@ class EHGallery():
         pdf_path = args.output or f'{CURRENT_DIR}/{self.title}.pdf'
         try:
             images[0].save(
-                pdf_path, "PDF", resolution=100.0, save_all=True, append_images=images[1:]
+                pdf_path, "PDF",
+                resolution=96,
+                save_all=True,
+                append_images=images[1:],
             )
         except PermissionError:
             logging.error(f'[create_pdf] 無法儲存到 {pdf_path}，請檢查文件是否被佔用以及權限是否正常')
@@ -405,7 +410,7 @@ def image_process(image: Image, first=False) -> Image:
         new_image.thumbnail((args.max_x, args.max_y), resample=PIL.Image.Resampling.LANCZOS)
 
     buffer = io.BytesIO()
-    new_image.save(buffer, 'jpeg')
+    new_image.save(buffer, 'jpeg', quality=90)
     buffer.flush()
     new_image.close()
     buffer.seek(0)
