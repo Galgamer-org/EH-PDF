@@ -5,3 +5,4 @@ cookies.json
 build/
 eh-pdf.spec
 dist/
+*.exe
