@@ -11,8 +11,7 @@ EH_API = 'https://api.e-hentai.org/api.php'
 EH_COOKIES = {
     'ipb_member_id': '3000000',
     'ipb_pass_hash': 'aaaaabbbbbcccccdddddeeeeefffffgg',
-    'igneous': 'e12345678',
-    'hath_perks': 'a.b1.c-abcde12345'
+    'sk': 'aaaaabbbbbCCCCC1111122222333',
 }
 
 
