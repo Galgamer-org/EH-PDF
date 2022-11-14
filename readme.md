@@ -7,24 +7,24 @@ Download manga from E-Hentai and export to PDF, for Kindle and iPad！
 
 ## 特色
 
-https://user-images.githubusercontent.com/66236255/193406050-43644be6-26dd-4c4e-8e07-3ff1bb58ba74.mp4
+https://user-images.githubusercontent.com/66236255/201678755-45cb9072-fa94-44fd-89d5-cd90d3367cfb.mp4
+
 
  * 支持將 E-Hentai 和 ExHentai 轉換成 PDF！
  * 支持登入加載和不登入加載（登入可以享受到你的帳號的特權，比如說加載大圖）
- * 多線程同時加載（不知道爲甚麼 Windows 上加載速度很陽春，我已經盡力了）
- * 將彩色頁面轉換成灰度，供 Kindle 使用（節約空間！）
- * 將頁面縮放到指定的尺寸，供 Kindle 使用（節約空間！）
- * 支持斷點續傳！網路不好導致下載失敗時，直接重新原地運行一遍，程序會從失敗的地方自動重啓
+ * 多線程同時加載（很快！開得越多越快，默認 12 線程）
+ * 將彩色頁面轉換成灰度並提高對比度（方便 Kindle 閱讀！）
+ * 將頁面縮放到指定的尺寸（節約空間！）
+ * 支持斷點續傳！下載失敗時，直接重新原地運行一遍，程序會從中斷的地方自動重啓
  * ...
 
 ## 安裝方法
 
 ### 免安裝學習版
 
-點此下載，學習版僅限 Windows  
 https://github.com/Yamabuki-bakery/EH-PDF/releases
 
-這個 exe 使用 pyInstaller 打包。
+提供 64 位 Windows 和 Linux 版
 
 ### Python 版
 
