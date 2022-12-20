@@ -1,13 +1,28 @@
 #!/usr/bin/python3
-import asyncio, logging, re, aiohttp, argparse, json, os, io, sys
+import aiohttp
+import argparse
+import asyncio
+import io
+import json
+import logging
+import os
+import re
+import sys
 
-import PIL.Image, PIL.ImageOps
+import PIL.Image
+import PIL.ImageOps
 from PIL import Image, ImageEnhance
 
 CURRENT_DIR = os.getcwd()
+# ━━━━━━━━━━━━━━━━━━
+# ▼ The directory for saving temporary image files and metadata
+# ━━━━━━━━━━━━━━━━━━
 APP_DIR: str = ''
 EX_API = 'https://exhentai.org/api.php'
 EH_API = 'https://api.e-hentai.org/api.php'
+# ━━━━━━━━━━━━━━━━━━
+# ▼ New EH cookies scheme. You may want to add the igneous field
+# ━━━━━━━━━━━━━━━━━━
 EH_COOKIES = {
     'ipb_member_id': '3000000',
     'ipb_pass_hash': 'aaaaabbbbbcccccdddddeeeeefffffgg',
@@ -36,7 +51,11 @@ async def main():
     return
 
 
-def check_cookies():
+def check_cookies() -> None:
+    """
+    Check if cookies file exists and load into global variable EH_COOKIES
+    :return: None
+    """
     global EH_COOKIES
     if not os.path.exists(args.cookies):
         logging.info(
@@ -51,18 +70,42 @@ def check_cookies():
         logging.info(f'[check_cookies] Loading {args.cookies}')
 
 
-class EHGallery():
+class EHGallery:
+    """
+    E-Hentai gallery class, represents an EH gallery and stores metadata.
+    """
+
+    # ━━━━━━━━━━━━━━━━━━
+    # ▼ https://exhentai.org/g/{gallery_id}/{gallery_token}/
+    # ━━━━━━━━━━━━━━━━━━
     gallery_id: str
     gallery_token: str
     is_EX: bool
+    # ━━━━━━━━━━━━━━━━━━
+    # ▼ How many images contained in this gallery
+    # ━━━━━━━━━━━━━━━━━━
     page_count: int
     title: str
+    # ━━━━━━━━━━━━━━━━━━
+    #   How many web pages used to show the thumbnail images of this gallery.
+    # ▼ An account with HATH Perk may have less thumb page count since more thumb images are shown each page
+    # ━━━━━━━━━━━━━━━━━━
     thumb_page_count: int
+    # ━━━━━━━━━━━━━━━━━━
+    #   The web page url of one single image, like this
+    # ▼ https://e-hentai.org/s/367d2b44a5/2407775-2
+    # ━━━━━━━━━━━━━━━━━━
     page_links: [str] = []
+    # ━━━━━━━━━━━━━━━━━━
+    # ▼ The filename saved during image download. For single page, it is like {10: "10.jpg"}
+    # ━━━━━━━━━━━━━━━━━━
     local_filenames: {int: str} = {}
     working_dir: str
 
     def __init__(self, url: str):
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ Match gallery_id and gallery_token from URL by regex
+        # ━━━━━━━━━━━━━━━━━━
         result = re.search(r'https://e([x-])hentai\.org/g/(\d+)/([a-zA-z\d]+)/?$', url)
         if not result:
             logging.error(f'提供的畫廊連結過於惡俗！請按照以下格式：https://exhentai.org/g/2339054/da04b84080/')
@@ -71,6 +114,10 @@ class EHGallery():
         self.gallery_token = result[3]
         self.is_EX = result[1] == 'x'
 
+        # ━━━━━━━━━━━━━━━━━━
+        #   The EX URL is given but no cookies file set,
+        # ▼ so we change the download source to e-hentai.org
+        # ━━━━━━━━━━━━━━━━━━
         if self.is_EX and not EH_COOKIES:
             logging.warning('恁提供了一個 ExHentai 的連結，但是卻沒有提供登入 cookies，'
                             '因此俺會嘗試在 E-Hentai 上搜索對應的畫廊，但是俺不保證成功，，，')
@@ -82,9 +129,17 @@ class EHGallery():
             pass
 
         self.working_dir = f'{APP_DIR}/{self.gallery_id}'
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ Try to load progress from existing metadata file, to skip the metadata collecting stage
+        # ━━━━━━━━━━━━━━━━━━
         self.load_progress()
 
-    def load_progress(self):
+    def load_progress(self) -> None:
+        """
+        Read previously collected metadata from metadata.json,
+        so we don't have to collect gallery's metadata more than once.
+        :return: None
+        """
         try:
             progress_file = open(f'{self.working_dir}/metadata.json', 'r', encoding='UTF-8')
             progress = json.load(progress_file)
@@ -92,6 +147,9 @@ class EHGallery():
             logging.debug(f'[load_progress_stage1] Error in loading progress, {e}')
             return
 
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ Read known title and page_count
+        # ━━━━━━━━━━━━━━━━━━
         try:
             self.title = progress['title']
             self.page_count = progress['page_count']
@@ -100,6 +158,9 @@ class EHGallery():
             self.title = ''
             self.page_count = 0
 
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ Read thumb_page_count and page_links
+        # ━━━━━━━━━━━━━━━━━━
         try:
             self.thumb_page_count = progress['thumb_page_count']
             self.page_links = progress['page_links']
@@ -109,6 +170,9 @@ class EHGallery():
             self.page_links = []
             return
 
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ Read the downloaded image files name list for continuous download
+        # ━━━━━━━━━━━━━━━━━━
         try:
             self.local_filenames = progress['local_filenames']
         except Exception as e:
@@ -116,7 +180,11 @@ class EHGallery():
             self.local_filenames = {}
             return
 
-    def save_progress(self):
+    def save_progress(self) -> None:
+        """
+        Save current state object to JSON file, except working directory
+        :return: None
+        """
         progress = self.__dict__.copy()
         progress.pop('working_dir')
         if self.page_links:
@@ -130,7 +198,12 @@ class EHGallery():
         metadata_file.close()
         # logging.debug(f'[save_progress] Progress & metadata saved!!')
 
-    def get_gallery_url(self, page: int = 0):
+    def get_gallery_url(self, page: int = 0) -> str:
+        """
+        Build gallery thumbnail web page url with page count
+        :param page: The thumbnail image list page
+        :return: like this: https://e-hentai.org/g/2407775/371d8cb5d6/?p=2
+        """
         if self.is_EX:
             base_url = 'https://exhentai.org/g/'
         else:
@@ -140,11 +213,11 @@ class EHGallery():
             url = url + f'?p={page - 1}'
         return url
 
-    async def get_metadata(self):
-        '''
-        Fetch title and page count from ehapi
+    async def get_metadata(self) -> None:
+        """
+        Fetch title and page count from eh-api
         :return: None
-        '''
+        """
         try:
             if self.__getattribute__('title'):
                 if self.__getattribute__('page_count'):
@@ -153,7 +226,7 @@ class EHGallery():
         except AttributeError:
             pass
 
-        API = EX_API if self.is_EX else EH_API
+        api_endpoint = EX_API if self.is_EX else EH_API
         payload = {
             "method": "gdata",
             "gidlist": [
@@ -163,9 +236,9 @@ class EHGallery():
         }
 
         async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
-            async with session.post(API, data=json.dumps(payload)) as resp:
+            async with session.post(api_endpoint, data=json.dumps(payload)) as resp:
                 if resp.status != 200:
-                    logging.error(f'無法聯絡 API： {API}')
+                    logging.error(f'無法聯絡 API： {api_endpoint}')
                     sys.exit(1)
                 metadata = json.loads(await resp.text())
                 logging.debug(metadata)
@@ -177,14 +250,21 @@ class EHGallery():
                     sys.exit(1)
                 try:
                     self.title = metadata['gmetadata'][0]['title_jpn']
-                except:
+                except (KeyError, IndexError):
                     logging.debug(f'Cannot find JPN title')
                     pass
                 logging.info(f'[get_metadata] pages:{self.page_count}, title:{self.title}')
         self.save_progress()
 
-    async def get_each_page_link(self):
-        # get thumb page count first
+    async def get_each_page_link(self) -> None:
+        """
+        Get each image page link from thumbnail pages.
+        Like this: https://e-hentai.org/s/367d2b44a5/2407775-2
+        :return: None
+        """
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ Get thumb page count first
+        # ━━━━━━━━━━━━━━━━━━
         try:
             if self.__getattribute__('thumb_page_count'):
                 if self.__getattribute__('page_links'):
@@ -193,23 +273,26 @@ class EHGallery():
         except AttributeError:
             pass
 
-        def count_td_in_html(html: str) -> int:
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ Functions copied from GitHub, to extract some info from EH html
+        # ━━━━━━━━━━━━━━━━━━
+        def count_td_in_html(page_html: str) -> int:
             pattern = re.compile(r'<td.*?>', re.S)
-            allTd = pattern.findall(html)
-            return len(allTd)
+            all_td = pattern.findall(page_html)
+            return len(all_td)
 
-        def get_thumb_page_count(html: str) -> int:
-            targetTable = extract_info(html, '<table class="ptt".*?</table>')
-            return count_td_in_html(targetTable) - 2
+        def get_thumb_page_count(page_html: str) -> int:
+            target_table = extract_info(page_html, '<table class="ptt".*?</table>')
+            return count_td_in_html(target_table) - 2
 
         def extract_page_urls(page_html: str):
             pattern = re.compile(r'<div class="gdt.*?</a>', re.S)
             all_div = pattern.findall(page_html)
-            urls = []
+            page_urls = []
             for div in all_div:
-                aTag = extract_info(div, "<a href=.*?>")
-                urls.append(aTag.split('"')[1])
-            return urls
+                a_tag = extract_info(div, "<a href=.*?>")
+                urls.append(a_tag.split('"')[1])
+            return page_urls
 
         async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
             async with session.get(self.get_gallery_url(), allow_redirects=False) as resp:
@@ -298,7 +381,7 @@ class EHGallery():
     async def download_worker(self, index: int, queue: asyncio.Queue, main_site_session: aiohttp.ClientSession):
         page_url = self.page_links[index]
         try:
-            #async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
+            # async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
             async with main_site_session.get(page_url, allow_redirects=False) as resp:
                 if resp.status != 200:
                     logging.error(f'\r[download_worker] #{index} E-Hentai 無法打開！!!')
@@ -321,9 +404,9 @@ class EHGallery():
 
                     mimetype = resp.headers.get('Content-Type')
                     size = resp.headers.get('Content-Length')
-                    bytes = await resp.read()
-                    if len(bytes) != int(size):
-                        logging.error(f'\r[download_worker] #{index} 下載的文件大小 {len(bytes)}（{size}） 過於惡俗！！')
+                    recv_bytes = await resp.read()
+                    if len(recv_bytes) != int(size):
+                        logging.error(f'\r[download_worker] #{index} 下載的文件大小 {len(recv_bytes)}（{size}） 過於惡俗！！')
                         await queue.put({'index': index, 'success': False})
                         return
 
@@ -338,7 +421,7 @@ class EHGallery():
                         return
 
                     local_file = open(f'{self.working_dir}/download/{index}{suffix}', 'wb')
-                    local_file.write(bytes)
+                    local_file.write(recv_bytes)
                     local_file.close()
                     await queue.put({'index': index, 'success': True, 'filename': f'{index}{suffix}'})
                     return
@@ -419,8 +502,8 @@ def image_process(image: Image, first=False) -> Image:
     return Image.open(buffer)
 
 
-def extract_info(content: str, regExp: str) -> str:
-    pattern = re.compile(regExp, re.S)
+def extract_info(content: str, regexp: str) -> str:
+    pattern = re.compile(regexp, re.S)
     match = pattern.search(content)
     if match:
         return match.group()
