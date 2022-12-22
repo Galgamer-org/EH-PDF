@@ -1,4 +1,19 @@
 #!/usr/bin/python3
+"""
+  EH-PDF: Download manga from E-Hentai and export to PDF, for Kindle and iPad！
+▼ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  How it works:
+   1. 使用你提供的登入 cookies 抓取指定的畫廊頁面的信息
+   2. 一個畫廊可能包含很多圖片，因此縮略圖會分好多頁來顯示。
+      程序將會從畫廊頁面的第一頁得知總共有多少頁的縮略圖
+   3. 逐頁地分析這些縮略圖的頁面，並且從中抽取出每一圖片頁的連結
+   4. 同時創建多個異步任務，並行抓取這些圖片頁連結，得到真正的圖片的 URL 地址，
+      然後下載這張圖片
+   5. 全部完成後，根據設定的參數對圖片進行處理，然後轉換成 PDF
+
+  以上所述的每一步完成之後程序都會將目前的狀態保存到一個 JSON 文件中，以便程序中斷重啓後
+  從上次結束的地方開始。因此這個程序可以在運行的中途隨時退出，進度不會丟失。
+"""
 import aiohttp
 import argparse
 import asyncio
@@ -322,19 +337,27 @@ class EHGallery:
         self.save_progress()
 
     async def download_images(self) -> bool:
-        # make download dir
+        """
+        In responsible for keep track of download workers.
+        :return: True for all success, False for error occurred.
+        """
         try:
             os.mkdir(f'{self.working_dir}/download')
         except FileExistsError:
             pass
         download_dir = f'{self.working_dir}/download'
 
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ 創建幾個列表，用來維護負責每一頁的 worker 的狀態。
+        # ━━━━━━━━━━━━━━━━━━
         to_dl: [int] = list(range(self.page_count))
         dl_ing: [int] = []
         dl_ok: [int] = []
         dl_failed: [int] = []
 
-        # search for download dir
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ 搜索下載目錄，確定已經下載完成的文件來實現斷點續傳
+        # ━━━━━━━━━━━━━━━━━━
         filelist = os.listdir(download_dir)
         for filename in filelist:
             result = re.search(r'^(\d+)\.[a-zA-Z]{3,5}$', filename)
@@ -343,20 +366,42 @@ class EHGallery:
                 to_dl.remove(int(result[1]))
 
         logging.info(f'[download_images] 我們還有 {len(to_dl)} 個需要下載。')
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ 允許最大的同時進行的下載任務數
+        # ━━━━━━━━━━━━━━━━━━
         MAX_CONCURRENT_TASKS = args.jobs
         WORKER_POOL = []
 
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ 用來從 worker 收集狀態數據的同步隊列
+        # ━━━━━━━━━━━━━━━━━━
         queue = asyncio.Queue()
         print(f'\r下載中： {len(dl_ok) + len(dl_failed)}/{self.page_count}', end='')
+
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ 創建一個 http session 並且復用，用來抓取每一圖片頁。
+        # ━━━━━━━━━━━━━━━━━━
         async with aiohttp.ClientSession(cookies=EH_COOKIES) as main_site_session:
             while len(to_dl) or len(dl_ing):
                 while len(WORKER_POOL) < MAX_CONCURRENT_TASKS and len(to_dl) != 0:
                     this_index = to_dl[0]
+                    # ━━━━━━━━━━━━━━━━━━
+                    #   HTTP2 session 復用的思想，
+                    # ▼ 這個 session 要傳給 worker 用，不然會因爲 session 過多觸發 EH 的 rate limit
+                    # ━━━━━━━━━━━━━━━━━━
                     asyncio.create_task(self.download_worker(this_index, queue, main_site_session))
                     WORKER_POOL.append(this_index)
                     to_dl.remove(this_index)
                     dl_ing.append(this_index)
                 try:
+                    # ━━━━━━━━━━━━━━━━━━
+                    # {
+                    #   'index': index,
+                    #   'success': True,
+                    #   'filename': f'{index}{suffix}'
+                    # }
+                    # ▼ 傳遞的消息格式
+                    # ━━━━━━━━━━━━━━━━━━
                     message = queue.get_nowait()
                     if message['success']:
                         dl_ok.append(message['index'])
@@ -378,10 +423,19 @@ class EHGallery:
             return False
         return True
 
-    async def download_worker(self, index: int, queue: asyncio.Queue, main_site_session: aiohttp.ClientSession):
+    async def download_worker(self, index: int, queue: asyncio.Queue, main_site_session: aiohttp.ClientSession) -> None:
+        """
+        The real part of executing download task
+        :param index: 畫廊的第 x 頁，從 0 開始。
+        :param queue: 用來通信的同步隊列
+        :param main_site_session: 用來訪問 EH 圖片頁的 session
+        :return: None
+        """
         page_url = self.page_links[index]
         try:
-            # async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
+            # ━━━━━━━━━━━━━━━━━━
+            # ▼ 復用之前的 session，避免觸發 EH 主站的 rate limit
+            # ━━━━━━━━━━━━━━━━━━
             async with main_site_session.get(page_url, allow_redirects=False) as resp:
                 if resp.status != 200:
                     logging.error(f'\r[download_worker] #{index} E-Hentai 無法打開！!!')
@@ -395,6 +449,9 @@ class EHGallery:
                     await queue.put({'index': index, 'success': False})
                     return
 
+            # ━━━━━━━━━━━━━━━━━━
+            # ▼ 圖片文件存在域 Hentai@Home 系統上面，因此新開 session，先將下載數據暫存在內存
+            # ━━━━━━━━━━━━━━━━━━
             async with aiohttp.ClientSession(cookies={}) as session:
                 async with session.get(target_img_url, allow_redirects=False) as resp:
                     if resp.status != 200:
@@ -410,12 +467,17 @@ class EHGallery:
                         await queue.put({'index': index, 'success': False})
                         return
 
-                    # write to file
+                    # ━━━━━━━━━━━━━━━━━━
+                    # ▼ 講下載到內存中的數據寫入本地
+                    # ━━━━━━━━━━━━━━━━━━
                     if mimetype == 'image/jpeg':
                         suffix = '.jpg'
                     elif mimetype == 'image/png':
                         suffix = '.png'
                     else:
+                        # ━━━━━━━━━━━━━━━━━━
+                        # ▼ 不支持 GIF 圖，，，
+                        # ━━━━━━━━━━━━━━━━━━
                         logging.error(f'\r[download_worker] #{index} 的 mime type {mimetype} 過於惡俗！！')
                         await queue.put({'index': index, 'success': False})
                         return
@@ -430,19 +492,18 @@ class EHGallery:
             await queue.put({'index': index, 'success': False})
             return
 
-    def create_pdf(self):
+    def create_pdf(self) -> None:
+        """
+        從已下載的圖片來創建 PDF
+        :return: None
+        """
         logging.info(f'[create_pdf] 正在建立 PDF')
         download_dir = f'{self.working_dir}/download'
 
-        # search for download dir
-        # paths: [int] = []
-        # filelist = os.listdir(download_dir)
-        # for filename in filelist:
-        #     result = re.search(r'^(\d+)\.[a-zA-Z]{3,5}$', filename)
-        #     if result and (0 <= int(result[1]) < self.page_count):
-        #         paths.append(f'{self.working_dir}/download/{filename}')
-
         images = []
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ 統計本地的圖片文件列表然後順便處理
+        # ━━━━━━━━━━━━━━━━━━
         try:
             for index in range(self.page_count):
                 modified = image_process(Image.open(f'{download_dir}/{self.local_filenames[str(index)]}'), index == 0)
@@ -468,9 +529,18 @@ class EHGallery:
 
 
 def image_process(image: Image, first=False) -> Image:
+    """
+    根據參數處理圖片文件
+    :param image: PIL 的 Image 對象
+    :param first: 是否是第一頁？
+    :return: 處理後的 Image 對象
+    """
     new_image = image
     new_image.load()
 
+    # ━━━━━━━━━━━━━━━━━━
+    # ▼ 消除透明度通道，因爲 PDF 不支持
+    # ━━━━━━━━━━━━━━━━━━
     if new_image.mode == "RGBA":
         logging.debug(f'[image_process] RGBA 轉換成 RGB')
 
@@ -479,12 +549,18 @@ def image_process(image: Image, first=False) -> Image:
 
         new_image = background
 
+    # ━━━━━━━━━━━━━━━━━━
+    # ▼ 封面圖不轉換成灰度，而其他的轉換
+    # ━━━━━━━━━━━━━━━━━━
     if args.greyscale and not first:
         logging.debug(f'[image_process] 轉換成灰度')
         new_image = PIL.ImageOps.grayscale(new_image)
         enhancer = ImageEnhance.Contrast(new_image)
         new_image = enhancer.enhance(1.25)
 
+    # ━━━━━━━━━━━━━━━━━━
+    # ▼ 根據最大圖像尺寸縮放圖片
+    # ━━━━━━━━━━━━━━━━━━
     if args.max_x or args.max_y:
         logging.debug(f'[image_process] 縮放大小到 {args.max_x}x{args.max_y}')
         if args.max_x is None:
@@ -503,6 +579,12 @@ def image_process(image: Image, first=False) -> Image:
 
 
 def extract_info(content: str, regexp: str) -> str:
+    """
+    根據規則運算式來從原文中提取指定內容的 wrap 函數
+    :param content: 原文
+    :param regexp: 規則運算式
+    :return: 匹配到的內容
+    """
     pattern = re.compile(regexp, re.S)
     match = pattern.search(content)
     if match:
@@ -511,7 +593,11 @@ def extract_info(content: str, regexp: str) -> str:
         return ''
 
 
-def mkdir():
+def mkdir() -> None:
+    """
+    創建工作時用的臨時文件夾
+    :return: None
+    """
     global APP_DIR
     try:
         os.mkdir('EH-Downloader')
@@ -521,7 +607,9 @@ def mkdir():
 
 
 if __name__ == '__main__':
-    # parse arg
+    # ━━━━━━━━━━━━━━━━━━
+    # ▼ 檢查輸入參數
+    # ━━━━━━━━━━━━━━━━━━
     parser = argparse.ArgumentParser(prog='eh-pdf.py',
                                      description='Download EH artwork to PDF for your Kindle or iPad')
     parser.add_argument('-c', '--cookies', default='cookies.json', help='Your EH login cookies file')
@@ -547,5 +635,8 @@ if __name__ == '__main__':
     if args.jobs < 1:
         logging.error(f'線程數量爲 {args.jobs}，過於惡俗！')
         sys.exit(2)
-    # Let's roll!
+
+    # ━━━━━━━━━━━━━━━━━━
+    # ▼ Let's roll!
+    # ━━━━━━━━━━━━━━━━━━
     asyncio.run(main())
