@@ -110,11 +110,11 @@ class EHGallery:
     #   The web page url of one single image, like this
     # ▼ https://e-hentai.org/s/367d2b44a5/2407775-2
     # ━━━━━━━━━━━━━━━━━━
-    page_links: [str] = []
+    page_links: list[str] = []
     # ━━━━━━━━━━━━━━━━━━
     # ▼ The filename saved during image download. For single page, it is like {10: "10.jpg"}
     # ━━━━━━━━━━━━━━━━━━
-    local_filenames: {int: str} = {}
+    local_filenames: dict[int, str] = {}
     working_dir: str
 
     def __init__(self, url: str):
@@ -264,7 +264,8 @@ class EHGallery:
                     logging.error(f'過於惡俗！ {e}')
                     sys.exit(1)
                 try:
-                    self.title = metadata['gmetadata'][0]['title_jpn']
+                    if metadata['gmetadata'][0]['title_jpn']:
+                        self.title = metadata['gmetadata'][0]['title_jpn']
                 except (KeyError, IndexError):
                     logging.debug(f'Cannot find JPN title')
                     pass
@@ -320,7 +321,7 @@ class EHGallery:
             self.save_progress()
 
             logging.info(f'[get_each_page_link] 正在從縮略圖頁面中提取畫廊頁面，，，')
-            urls: [str] = []
+            urls: list[str] = []
             for p in range(1, self.thumb_page_count + 1):
                 print(f'\r處理中： {p}/{self.thumb_page_count}', end='')
                 async with session.get(self.get_gallery_url(p), allow_redirects=False) as resp:
@@ -342,18 +343,18 @@ class EHGallery:
         :return: True for all success, False for error occurred.
         """
         try:
-            os.mkdir(f'{self.working_dir}/download')
+            os.mkdir(f'{self.working_dir}/download-{self.title}')
         except FileExistsError:
             pass
-        download_dir = f'{self.working_dir}/download'
+        download_dir = f'{self.working_dir}/download-{self.title}'
 
         # ━━━━━━━━━━━━━━━━━━
         # ▼ 創建幾個列表，用來維護負責每一頁的 worker 的狀態。
         # ━━━━━━━━━━━━━━━━━━
-        to_dl: [int] = list(range(self.page_count))
-        dl_ing: [int] = []
-        dl_ok: [int] = []
-        dl_failed: [int] = []
+        to_dl: list[int] = list(range(self.page_count))
+        dl_ing: list[int] = []
+        dl_ok: list[int] = []
+        dl_failed: list[int] = []
 
         # ━━━━━━━━━━━━━━━━━━
         # ▼ 搜索下載目錄，確定已經下載完成的文件來實現斷點續傳
@@ -482,7 +483,7 @@ class EHGallery:
                         await queue.put({'index': index, 'success': False})
                         return
 
-                    local_file = open(f'{self.working_dir}/download/{index}{suffix}', 'wb')
+                    local_file = open(f'{self.working_dir}/download-{self.title}/{index}{suffix}', 'wb')
                     local_file.write(recv_bytes)
                     local_file.close()
                     await queue.put({'index': index, 'success': True, 'filename': f'{index}{suffix}'})
@@ -498,7 +499,7 @@ class EHGallery:
         :return: None
         """
         logging.info(f'[create_pdf] 正在建立 PDF')
-        download_dir = f'{self.working_dir}/download'
+        download_dir = f'{self.working_dir}/download-{self.title}'
 
         images = []
         # ━━━━━━━━━━━━━━━━━━
