@@ -60,10 +60,23 @@ async def main():
         await asyncio.sleep(1.25)
         return
     # print(target_gallery.page_links)
-    target_gallery.create_pdf()
+    if args.pdf:
+        target_gallery.create_pdf()
+
     logging.info('完成力，即將退出')
     await asyncio.sleep(1.25)
     return
+
+
+def sanitize(filename: str) -> str:
+    BLACKLIST = ['\\', '/', ':', '*', '?', '"', '<', '>', '|']
+    for char in BLACKLIST:
+        filename = filename.replace(char, '_')
+
+    if filename[-1] == '.':
+        filename += '_'
+
+    return filename
 
 
 def check_cookies() -> None:
@@ -114,8 +127,8 @@ class EHGallery:
     # ━━━━━━━━━━━━━━━━━━
     # ▼ The filename saved during image download. For single page, it is like {10: "10.jpg"}
     # ━━━━━━━━━━━━━━━━━━
-    local_filenames: dict[int, str] = {}
-    working_dir: str
+    local_filenames: dict[str, str] = {}
+    working_dir: str = ''
 
     def __init__(self, url: str):
         # ━━━━━━━━━━━━━━━━━━
@@ -138,12 +151,24 @@ class EHGallery:
                             '因此俺會嘗試在 E-Hentai 上搜索對應的畫廊，但是俺不保證成功，，，')
             self.is_EX = False
 
-        try:
-            os.mkdir(f'{APP_DIR}/{self.gallery_id}')
-        except FileExistsError:
-            pass
+        # ━━━━━━━━━━━━━━━━━━
+        # ▼ find working directory with format <gallery id>-<some random gallery title>
+        #   use regex to match the id part
+        # ━━━━━━━━━━━━━━━━━━
 
-        self.working_dir = f'{APP_DIR}/{self.gallery_id}'
+        working_dir_name_pattern = re.compile(r'([0-9]+)-?.*')
+        for i in os.listdir(APP_DIR):
+            match = working_dir_name_pattern.match(i)
+            if match and match[1] == self.gallery_id:
+                self.working_dir = f'{APP_DIR}/{i}'
+                logging.debug(f'[__init__] Found existing working directory {self.working_dir}')
+                break
+
+        if not self.working_dir:
+            self.working_dir = f'{APP_DIR}/{self.gallery_id}'
+            os.mkdir(self.working_dir)
+            # we will rename the directory after we get the gallery title
+
         # ━━━━━━━━━━━━━━━━━━
         # ▼ Try to load progress from existing metadata file, to skip the metadata collecting stage
         # ━━━━━━━━━━━━━━━━━━
@@ -257,6 +282,10 @@ class EHGallery:
                     sys.exit(1)
                 metadata = json.loads(await resp.text())
                 logging.debug(metadata)
+                if len(metadata) == 0:
+                    logging.error(f'無法取得 metadata，cookies 是否正確？')
+                    sys.exit(1)
+
                 try:
                     self.title = metadata['gmetadata'][0]['title']
                     self.page_count = int(metadata['gmetadata'][0]['filecount'])
@@ -271,6 +300,12 @@ class EHGallery:
                     pass
                 logging.info(f'[get_metadata] pages:{self.page_count}, title:{self.title}')
         self.save_progress()
+
+        # rename working directory with title
+        if self.title:
+            logging.debug(f'[get_metadata] Renaming working directory with title: {self.title}')
+            os.rename(self.working_dir, f'{self.working_dir}-{sanitize(self.title)}')
+            self.working_dir = f'{self.working_dir}-{sanitize(self.title)}'
 
     async def get_each_page_link(self) -> None:
         """
@@ -343,10 +378,10 @@ class EHGallery:
         :return: True for all success, False for error occurred.
         """
         try:
-            os.mkdir(f'{self.working_dir}/download-{self.title}')
+            os.mkdir(f'{self.working_dir}/download-{sanitize(self.title)}')
         except FileExistsError:
             pass
-        download_dir = f'{self.working_dir}/download-{self.title}'
+        download_dir = f'{self.working_dir}/download-{sanitize(self.title)}'
 
         # ━━━━━━━━━━━━━━━━━━
         # ▼ 創建幾個列表，用來維護負責每一頁的 worker 的狀態。
@@ -433,65 +468,81 @@ class EHGallery:
         :return: None
         """
         page_url = self.page_links[index]
-        try:
-            # ━━━━━━━━━━━━━━━━━━
-            # ▼ 復用之前的 session，避免觸發 EH 主站的 rate limit
-            # ━━━━━━━━━━━━━━━━━━
-            async with main_site_session.get(page_url, allow_redirects=False) as resp:
-                if resp.status != 200:
-                    logging.error(f'\r[download_worker] #{index} E-Hentai 無法打開！!!')
-                    await queue.put({'index': index, 'success': False})
-                    return
-
-                html = await resp.text()
-                target_img_url = extract_info(html, '<img id=.*?>').split('"')[3]
-                if not target_img_url:
-                    logging.error(f'\r[download_worker] #{index} target image {target_img_url} 過於惡俗！！')
-                    await queue.put({'index': index, 'success': False})
-                    return
-
-            # ━━━━━━━━━━━━━━━━━━
-            # ▼ 圖片文件存在域 Hentai@Home 系統上面，因此新開 session，先將下載數據暫存在內存
-            # ━━━━━━━━━━━━━━━━━━
-            async with aiohttp.ClientSession(cookies={}) as session:
-                async with session.get(target_img_url, allow_redirects=False) as resp:
+        secondary_nl_id = ''
+        retry = 0
+        while retry < 3:
+            if retry:
+                logging.warning(f'\r[download_worker] #{index} 連線失敗！正在重試第 {retry} 次... {secondary_nl_id}')
+            try:
+                # ━━━━━━━━━━━━━━━━━━
+                # ▼ 復用之前的 session，避免觸發 EH 主站的 rate limit
+                # ━━━━━━━━━━━━━━━━━━
+                async with main_site_session.get(f'{page_url}?nl={secondary_nl_id}', allow_redirects=False) as resp:
                     if resp.status != 200:
-                        logging.error(f'\r[download_worker] #{index} 狀態碼 {resp.status} 過於惡俗！！')
+                        logging.error(f'\r[download_worker] #{index} E-Hentai 無法打開！!!')
                         await queue.put({'index': index, 'success': False})
                         return
 
-                    mimetype = resp.headers.get('Content-Type')
-                    size = resp.headers.get('Content-Length')
-                    recv_bytes = await resp.read()
-                    if len(recv_bytes) != int(size):
-                        logging.error(f'\r[download_worker] #{index} 下載的文件大小 {len(recv_bytes)}（{size}） 過於惡俗！！')
+                    html = await resp.text()
+                    target_img_url = extract_info(html, '<img id=.*?>').split('"')[3]
+                    # extract secondary_nl_id from <a id="loadfail" onclick="return nl('secondary id')"
+                    secondary_nl_id = extract_info(html, 'id="loadfail" onclick="return nl.*?"').split("'")[1]
+                    if not target_img_url:
+                        logging.error(f'\r[download_worker] #{index} target image {target_img_url} 過於惡俗！！')
                         await queue.put({'index': index, 'success': False})
                         return
 
-                    # ━━━━━━━━━━━━━━━━━━
-                    # ▼ 講下載到內存中的數據寫入本地
-                    # ━━━━━━━━━━━━━━━━━━
-                    if mimetype == 'image/jpeg':
-                        suffix = '.jpg'
-                    elif mimetype == 'image/png':
-                        suffix = '.png'
-                    else:
+                # ━━━━━━━━━━━━━━━━━━
+                # ▼ 圖片文件存在域 Hentai@Home 系統上面，因此新開 session，先將下載數據暫存在內存
+                # ━━━━━━━━━━━━━━━━━━
+                session_timeout = aiohttp.ClientTimeout(total=None,
+                                                        sock_connect=7,
+                                                        sock_read=10)
+                async with aiohttp.ClientSession(cookies={}, timeout=session_timeout) as session:
+                    async with session.get(target_img_url, allow_redirects=False) as resp:
+                        if resp.status != 200:
+                            logging.error(f'\r[download_worker] #{index} 狀態碼 {resp.status} 過於惡俗！！')
+                            await queue.put({'index': index, 'success': False})
+                            return
+
+                        mimetype = resp.headers.get('Content-Type')
+                        size = resp.headers.get('Content-Length')
+                        recv_bytes = await resp.read()
+                        if len(recv_bytes) != int(size):
+                            logging.error(
+                                f'\r[download_worker] #{index} 下載的文件大小 {len(recv_bytes)}（{size}） 過於惡俗！！')
+                            await queue.put({'index': index, 'success': False})
+                            return
+
                         # ━━━━━━━━━━━━━━━━━━
-                        # ▼ 不支持 GIF 圖，，，
+                        # ▼ 講下載到內存中的數據寫入本地
                         # ━━━━━━━━━━━━━━━━━━
-                        logging.error(f'\r[download_worker] #{index} 的 mime type {mimetype} 過於惡俗！！')
-                        await queue.put({'index': index, 'success': False})
-                        return
+                        if mimetype == 'image/jpeg':
+                            suffix = '.jpg'
+                        elif mimetype == 'image/png':
+                            suffix = '.png'
+                        else:
+                            # ━━━━━━━━━━━━━━━━━━
+                            # ▼ 不支持 GIF 圖，，，
+                            # ━━━━━━━━━━━━━━━━━━
+                            logging.error(
+                                f'\r[download_worker] #{index} 的 mime type {mimetype} 過於惡俗！！您的 EH 配額是否不足？請前往 '
+                                f'https://e-hentai.org/home.php 使用 GP 點重置！')
+                            await queue.put({'index': index, 'success': False})
+                            return
 
-                    local_file = open(f'{self.working_dir}/download-{self.title}/{index}{suffix}', 'wb')
-                    local_file.write(recv_bytes)
-                    local_file.close()
-                    await queue.put({'index': index, 'success': True, 'filename': f'{index}{suffix}'})
-                    return
-        except (aiohttp.client.ClientError, asyncio.TimeoutError):
-            logging.error(f'\r[download_worker] #{index} 連線失敗！')
-            await queue.put({'index': index, 'success': False})
-            return
+                        local_file = open(f'{self.working_dir}/download-{sanitize(self.title)}/{index}{suffix}', 'wb')
+                        local_file.write(recv_bytes)
+                        local_file.close()
+                        await queue.put({'index': index, 'success': True, 'filename': f'{index}{suffix}'})
+                        return
+            except (aiohttp.client.ClientError, asyncio.TimeoutError):
+                retry += 1
+                await asyncio.sleep(1)
+
+        logging.error(f'\r[download_worker] #{index} 連線失敗！請前往 {page_url} 頁面底部點擊修復破損圖片！')
+        await queue.put({'index': index, 'success': False})
+        return
 
     def create_pdf(self) -> None:
         """
@@ -499,7 +550,7 @@ class EHGallery:
         :return: None
         """
         logging.info(f'[create_pdf] 正在建立 PDF')
-        download_dir = f'{self.working_dir}/download-{self.title}'
+        download_dir = f'{self.working_dir}/download-{sanitize(self.title)}'
 
         images = []
         # ━━━━━━━━━━━━━━━━━━
@@ -514,7 +565,8 @@ class EHGallery:
             logging.error(f'[create_pdf] {e} 數據已損壞，請刪除下載目錄中的內容並重新下載，，，')
             sys.exit(1)
 
-        pdf_path = args.output or f'{CURRENT_DIR}/{self.title}.pdf'
+        pdf_path = args.output or f'{CURRENT_DIR}/{sanitize(self.title)}.pdf'
+        pdf_path = os.path.abspath(pdf_path)
         try:
             images[0].save(
                 pdf_path, "PDF",
@@ -550,6 +602,10 @@ def image_process(image: Image, first=False) -> Image:
 
         new_image = background
 
+    if new_image.mode == "P":
+        logging.debug(f'[image_process] P 模式轉換成 RGB')
+        new_image = new_image.convert("RGB")
+
     # ━━━━━━━━━━━━━━━━━━
     # ▼ 封面圖不轉換成灰度，而其他的轉換
     # ━━━━━━━━━━━━━━━━━━
@@ -568,7 +624,7 @@ def image_process(image: Image, first=False) -> Image:
             args.max_x = 99999
         if args.max_y is None:
             args.max_y = 99999
-        new_image.thumbnail((args.max_x, args.max_y), resample=PIL.Image.Resampling.LANCZOS)
+        new_image.thumbnail((args.max_x, args.max_y), resample=PIL.Image.LANCZOS)
 
     buffer = io.BytesIO()
     new_image.save(buffer, 'jpeg', quality=90)
@@ -622,8 +678,9 @@ if __name__ == '__main__':
     parser.add_argument('-y', '--max-y', type=int,
                         help='The max height in pixels of the PDF image, useful to reduce file size for Kindle')
     parser.add_argument('-o', '--output', help='The output path/filename of PDF file')
-    parser.add_argument('-j', '--jobs', type=int, default=12, help='允許多線程下載的最多線程，默認 12')
+    parser.add_argument('-j', '--jobs', type=int, default=32, help='允許多線程下載的最多線程，默認 32')
     parser.add_argument('-d', '--debug', action='store_true', help='Debug 模式，讓日誌輸出更加羅嗦')
+    parser.add_argument('-p', '--pdf', action='store_true', help='將下載的圖片合併成 PDF 文件')
     parser.add_argument('Gallery_URL', help='The EH gallery URL to download.', default='', nargs='?', const=None)
     args = parser.parse_args()
 
@@ -640,4 +697,9 @@ if __name__ == '__main__':
     # ━━━━━━━━━━━━━━━━━━
     # ▼ Let's roll!
     # ━━━━━━━━━━━━━━━━━━
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # give a hint to user to rerun the command with all the same arguments
+        logging.warning(f'您中斷了操作！您可以重新執行該命令 {sys.argv[0]} {args.Gallery_URL}')
+        sys.exit(1)
