@@ -418,6 +418,14 @@ class EHGallery:
         # ▼ 創建一個 http session 並且復用，用來抓取每一圖片頁。
         # ━━━━━━━━━━━━━━━━━━
         async with aiohttp.ClientSession(cookies=EH_COOKIES) as main_site_session:
+            # access the top page of gallery to garther hath perk cookies
+            async with main_site_session.get(self.get_gallery_url(), allow_redirects=False) as resp:
+                if resp.status != 200:
+                    logging.error(f'[download_images] 無法打開畫廊連結！！')
+                    sys.exit(1)
+                set_cookies = resp.cookies
+                logging.debug(f'[download_images] 成功獲取 hath perk cookies {set_cookies}')
+
             while len(to_dl) or len(dl_ing):
                 while len(WORKER_POOL) < MAX_CONCURRENT_TASKS and len(to_dl) != 0:
                     this_index = to_dl[0]
@@ -528,6 +536,7 @@ class EHGallery:
                             logging.error(
                                 f'\r[download_worker] #{index} 的 mime type {mimetype} 過於惡俗！！您的 EH 配額是否不足？請前往 '
                                 f'https://e-hentai.org/home.php 使用 GP 點重置！')
+                            logging.debug(f'\r[download_worker] image page url: {page_url}\nimage: {target_img_url}')
                             await queue.put({'index': index, 'success': False})
                             return
 
