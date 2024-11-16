@@ -27,6 +27,7 @@ import sys
 import PIL.Image
 import PIL.ImageOps
 from PIL import Image, ImageEnhance
+from bs4 import BeautifulSoup
 
 CURRENT_DIR = os.getcwd()
 # ━━━━━━━━━━━━━━━━━━
@@ -325,25 +326,16 @@ class EHGallery:
             pass
 
         # ━━━━━━━━━━━━━━━━━━
-        # ▼ Functions copied from GitHub, to extract some info from EH html
+        # ▼ Functions copied from GitHub, to extract some info from EH html,
+        #   2024: because using regex to parse is error-prone, so I replace it with BeautifulSoup
         # ━━━━━━━━━━━━━━━━━━
-        def count_td_in_html(page_html: str) -> int:
-            pattern = re.compile(r'<td.*?>', re.S)
-            all_td = pattern.findall(page_html)
-            return len(all_td)
-
         def get_thumb_page_count(page_html: str) -> int:
-            target_table = extract_info(page_html, '<table class="ptt".*?</table>')
-            return count_td_in_html(target_table) - 2
+            table = BeautifulSoup(page_html, 'html.parser').find('table', class_='ptt')
+            return len(table.find_all('td')) - 2
 
-        def extract_page_urls(page_html: str):
-            pattern = re.compile(r'<div class="gdt.*?</a>', re.S)
-            all_div = pattern.findall(page_html)
-            page_urls = []
-            for div in all_div:
-                a_tag = extract_info(div, "<a href=.*?>")
-                urls.append(a_tag.split('"')[1])
-            return page_urls
+        def extract_page_urls(page_html: str) -> list[str]:
+            gdt_div = BeautifulSoup(page_html, 'html.parser').find('div', id='gdt')
+            return [a['href'] for a in gdt_div.find_all('a')]
 
         async with aiohttp.ClientSession(cookies=EH_COOKIES) as session:
             async with session.get(self.get_gallery_url(), allow_redirects=False) as resp:
@@ -492,9 +484,10 @@ class EHGallery:
                         return
 
                     html = await resp.text()
-                    target_img_url = extract_info(html, '<img id=.*?>').split('"')[3]
+                    soup = BeautifulSoup(html, 'html.parser')
+                    target_img_url = soup.find('img', id='img')['src']
                     # extract secondary_nl_id from <a id="loadfail" onclick="return nl('secondary id')"
-                    secondary_nl_id = extract_info(html, 'id="loadfail" onclick="return nl.*?"').split("'")[1]
+                    secondary_nl_id = soup.find('a', id='loadfail')['onclick'].split("'")[1]
                     if not target_img_url:
                         logging.error(f'\r[download_worker] #{index} target image {target_img_url} 過於惡俗！！')
                         await queue.put({'index': index, 'success': False})
@@ -644,19 +637,19 @@ def image_process(image: Image, first=False) -> Image:
     return Image.open(buffer)
 
 
-def extract_info(content: str, regexp: str) -> str:
-    """
-    根據規則運算式來從原文中提取指定內容的 wrap 函數
-    :param content: 原文
-    :param regexp: 規則運算式
-    :return: 匹配到的內容
-    """
-    pattern = re.compile(regexp, re.S)
-    match = pattern.search(content)
-    if match:
-        return match.group()
-    else:
-        return ''
+# def extract_info(content: str, regexp: str) -> str:
+#     """
+#     根據規則運算式來從原文中提取指定內容的 wrap 函數
+#     :param content: 原文
+#     :param regexp: 規則運算式
+#     :return: 匹配到的內容
+#     """
+#     pattern = re.compile(regexp, re.S)
+#     match = pattern.search(content)
+#     if match:
+#         return match.group()
+#     else:
+#         return ''
 
 
 def mkdir() -> None:
