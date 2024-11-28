@@ -2,3 +2,4 @@ Pillow~=11.0.0
 asyncio~=3.4.3
 aiohttp~=3.11.2
 beautifulsoup4~=4.12.3
+result
