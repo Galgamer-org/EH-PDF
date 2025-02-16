@@ -510,6 +510,8 @@ class EHGallery:
                                 suffix = '.jpg'
                             elif mimetype == 'image/png':
                                 suffix = '.png'
+                            elif mimetype == 'image/webp':
+                                suffix = '.webp'
                             else:
                                 # ━━━━━━━━━━━━━━━━━━
                                 # ▼ 不支持 GIF 圖，，，
